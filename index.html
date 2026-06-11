@@ -96,20 +96,7 @@
     position: relative;
     min-height: 100vh;
     display: flex; align-items: center;
-    .hero-container {
-  background: url('photo-1606811841689-23dfddce3e95.webp') center/cover no-repeat;
-  
-  /* This creates the graceful fade-in effect */
-  animation: heroFadeIn 1.5s ease-out forwards;
-}
-
-/* This defines the starting and ending points of the animation */
-@keyframes heroFadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-    
+    style="background: url('photo-1606811841689-23dfddce3e95.webp') center/cover no-repeat; animation: heroFadeIn 1.5s ease-out forwards;"
   }
   .hero::before {
     content: ''; position: absolute; inset: 0;
