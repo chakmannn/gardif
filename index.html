@@ -245,6 +245,9 @@
     .float-whatsapp { bottom:92px; background:var(--whatsapp); }
     .float-phone { bottom:24px; background:var(--blue-600); }
 
+    /* Canvas collapse — used during quick-link navigation */
+    .sec-collapsed { height:0 !important; min-height:0 !important; padding:0 !important; margin:0 !important; overflow:hidden !important; border:none !important; opacity:0; }
+
     /* ===== RESPONSIVE ===== */
     @media (max-width:599px) {
       .hero-content { padding:100px 20px 80px; }
@@ -610,39 +613,77 @@
     var rt; window.addEventListener('resize', function() { clearTimeout(rt); rt=setTimeout(updateAll,120); });
     requestAnimationFrame(updateAll);
 
-    /* ===== CUSTOM SMOOTH SCROLL (requestAnimationFrame) ===== */
+    /* ===== DYNAMIC CANVAS COLLAPSING ===== */
     var HEADER_H = 110;
-    var isScrolling = false;
+    var isNavigating = false;
 
-    function easeInOutCubic(t) {
-      return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2;
+    /* All navigable sections in page order (including hero + info-blocks) */
+    var allSections = Array.prototype.slice.call(
+      document.querySelectorAll('#hero, .info-blocks, #who-we-are, #our-services, #before-and-after, #reviews, #contact-us, footer')
+    );
+
+    function getSectionIndex(id) {
+      for (var i = 0; i < allSections.length; i++) {
+        if (allSections[i].id === id) return i;
+      }
+      return -1;
     }
 
-    function smoothGlide(targetId) {
-      if (isScrolling) return;
+    /* Find which section the user is currently viewing */
+    function getCurrentIndex() {
+      var mid = window.innerHeight / 2;
+      for (var i = allSections.length - 1; i >= 0; i--) {
+        if (allSections[i].getBoundingClientRect().top <= mid) return i;
+      }
+      return 0;
+    }
+
+    function navigateTo(targetId) {
+      if (isNavigating) return;
       var el = document.getElementById(targetId);
       if (!el) return;
 
+      if (Math.abs(el.getBoundingClientRect().top - HEADER_H) < 5) return;
+
+      var targetIdx = getSectionIndex(targetId);
+      if (targetIdx === -1) return;
+      var currentIdx = getCurrentIndex();
+      if (currentIdx === targetIdx) return;
+
+      isNavigating = true;
+
+      /* 1. Collapse all sections between current and target */
+      var lo = Math.min(currentIdx, targetIdx);
+      var hi = Math.max(currentIdx, targetIdx);
+      var collapseSections = [];
+      for (var i = lo + 1; i < hi; i++) {
+        collapseSections.push(allSections[i]);
+      }
+      collapseSections.forEach(function(s) { s.classList.add('sec-collapsed'); });
+
+      /* 2. Smooth scroll over the collapsed (short) distance */
       var startY = window.pageYOffset;
-      var targetY = el.getBoundingClientRect().top + startY - HEADER_H;
-      var distance = targetY - startY;
-      if (Math.abs(distance) < 2) return;
+      var endY = el.getBoundingClientRect().top + startY - HEADER_H;
+      var dist = endY - startY;
+      var dur = 500;
+      var t0 = null;
 
-      /* Duration scales with distance for a gentle feel, capped */
-      var duration = Math.min(1400, Math.max(600, Math.abs(distance) * 0.6));
-      var startTime = null;
-      isScrolling = true;
-
-      function step(timestamp) {
-        if (!startTime) startTime = timestamp;
-        var elapsed = timestamp - startTime;
-        var progress = Math.min(elapsed / duration, 1);
-        var ease = easeInOutCubic(progress);
-        window.scrollTo(0, startY + distance * ease);
-        if (progress < 1) {
+      function step(ts) {
+        if (!t0) t0 = ts;
+        var p = Math.min((ts - t0) / dur, 1);
+        /* ease-in-out quad — gentle start and end */
+        var ease = p < 0.5 ? 2*p*p : 1 - Math.pow(-2*p+2,2)/2;
+        window.scrollTo(0, startY + dist * ease);
+        if (p < 1) {
           requestAnimationFrame(step);
         } else {
-          isScrolling = false;
+          /* 3. Restore — pin target in place */
+          var pinBefore = el.getBoundingClientRect().top;
+          collapseSections.forEach(function(s) { s.classList.remove('sec-collapsed'); });
+          var pinAfter = el.getBoundingClientRect().top;
+          var drift = pinAfter - pinBefore;
+          if (Math.abs(drift) > 1) window.scrollTo(0, window.pageYOffset + drift);
+          isNavigating = false;
         }
       }
       requestAnimationFrame(step);
@@ -651,22 +692,80 @@
     document.querySelectorAll('[data-link]').forEach(function(a) {
       a.addEventListener('click', function(e) {
         e.preventDefault();
-        var id = a.getAttribute('href').substring(1);
-        smoothGlide(id);
+        navigateTo(a.getAttribute('href').substring(1));
       });
     });
 
-    /* ===== ACTIVE NAV ===== */
+    /* ===== ACTIVE NAV (scroll-based + auto-scroll nav bar) ===== */
+    var navRowEl = document.getElementById('navRow');
     var allLinks = document.querySelectorAll('.nav-row a');
-    var secEls = ['who-we-are','our-services','before-and-after','reviews','contact-us'].map(function(id){return document.getElementById(id);});
-    var secObs = new IntersectionObserver(function(entries) {
-      entries.forEach(function(e) {
-        if (e.isIntersecting && e.intersectionRatio >= 0.3) {
-          allLinks.forEach(function(a) { a.classList.toggle('active', a.getAttribute('href')==='#'+e.target.id); });
-        }
+    var sectionIds = ['who-we-are','our-services','before-and-after','reviews','contact-us'];
+    var secEls = sectionIds.map(function(id){ return document.getElementById(id); });
+    var currentActive = '';
+
+    /* Fast nav-bar scroll — 200ms ease-out */
+    var navScrollAnim = null;
+    function scrollNavTo(target) {
+      if (navScrollAnim) cancelAnimationFrame(navScrollAnim);
+      var start = navRowEl.scrollLeft;
+      var dist = Math.max(0, target) - start;
+      if (Math.abs(dist) < 1) return;
+      var dur = 200;
+      var t0 = null;
+      function step(ts) {
+        if (!t0) t0 = ts;
+        var p = Math.min((ts - t0) / dur, 1);
+        var ease = 1 - Math.pow(1 - p, 3);
+        navRowEl.scrollLeft = start + dist * ease;
+        if (p < 1) navScrollAnim = requestAnimationFrame(step);
+      }
+      navScrollAnim = requestAnimationFrame(step);
+    }
+
+    function setActiveLink(id) {
+      if (id === currentActive) return;
+      currentActive = id;
+      allLinks.forEach(function(a) {
+        a.classList.toggle('active', a.getAttribute('href') === '#' + id);
       });
-    }, { threshold:[0.3] });
-    secEls.forEach(function(s){if(s)secObs.observe(s);});
+      var activeLink = navRowEl.querySelector('.active');
+      if (activeLink) {
+        var navW = navRowEl.getBoundingClientRect().width;
+        var linkW = activeLink.getBoundingClientRect().width;
+        scrollNavTo(activeLink.offsetLeft - (navW / 2) + (linkW / 2));
+      } else {
+        scrollNavTo(0);
+      }
+    }
+
+    function updateActiveOnScroll() {
+      var viewMid = window.innerHeight / 2;
+      var found = '';
+
+      for (var i = secEls.length - 1; i >= 0; i--) {
+        if (!secEls[i]) continue;
+        var rect = secEls[i].getBoundingClientRect();
+        /* Section is "current" when its top half has crossed the viewport midpoint */
+        if (rect.top <= viewMid) {
+          found = secEls[i].id;
+          break;
+        }
+      }
+
+      setActiveLink(found);
+    }
+
+    var scrollTick = false;
+    window.addEventListener('scroll', function() {
+      if (!scrollTick) {
+        scrollTick = true;
+        requestAnimationFrame(function() {
+          updateActiveOnScroll();
+          scrollTick = false;
+        });
+      }
+    }, { passive: true });
+    updateActiveOnScroll();
 
     /* ===== SCROLL ANIMATIONS ===== */
     var animObs = new IntersectionObserver(function(entries) {
